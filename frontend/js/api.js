@@ -1,5 +1,5 @@
 // Adresse de votre backend FastAPI
-const API_BASE_URL = "http://127.0.0.1:8000";
+const API_BASE_URL = "https://parkimvox-platform.onrender.com";
 
 function getToken() {
   return localStorage.getItem("token");
