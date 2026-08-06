@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8" />
+<title>ParkImVox - Espace Médecin</title>
+<link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+<div class="topbar">
+  <h1>ParkImVox — Espace Médecin</h1>
+  <button onclick="logout()">Déconnexion</button>
+</div>
+
+<div class="container">
+  <div class="two-col">
+    <div class="card">
+      <h2>Mes patients</h2>
+      <div id="patient-list">Chargement...</div>
+    </div>
+
+    <div class="card" id="patient-detail-card" style="display:none">
+      <h2 id="patient-detail-title">Détails patient</h2>
+
+      <h3>Nouvelle consultation (analyse vocale)</h3>
+      <label>Enregistrement audio du patient</label>
+      <input type="file" id="audio-file" accept="audio/*" />
+      <button class="btn" onclick="submitConsultation()">Analyser et enregistrer</button>
+      <div id="predict-result" style="margin-top:10px"></div>
+
+      <h3 style="margin-top:24px">Historique des consultations</h3>
+      <table>
+        <thead><tr><th>Date</th><th>Résultat</th><th>Remarques</th><th></th></tr></thead>
+        <tbody id="consult-table-body"><tr><td colspan="4">-</td></tr></tbody>
+      </table>
+
+      <h3 style="margin-top:24px">Messagerie avec le patient</h3>
+      <div class="chat-box" id="chat-box"></div>
+      <div class="chat-input-row">
+        <input type="text" id="chat-input" placeholder="Écrire un message..." />
+        <button class="btn" style="margin-top:0" onclick="sendMessage()">Envoyer</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="js/api.js"></script>
+<script>
+requireAuth('doctor');
+
+let selectedPatient = null;
+let myId = null;
+let pollInterval = null;
+
+async function init() {
+  const me = await apiFetch('/auth/me');
+  myId = me.id;
+  await loadPatients();
+}
+
+async function loadPatients() {
+  const listDiv = document.getElementById('patient-list');
+  try {
+    const patients = await apiFetch('/doctors/me/patients');
+    if (patients.length === 0) {
+      listDiv.innerHTML = "<p>Aucun patient assigné pour le moment. Demandez à vos patients d'indiquer votre nom d'utilisateur lors de leur inscription.</p>";
+      return;
+    }
+    listDiv.innerHTML = patients.map(p => `
+      <div class="patient-list-item" id="patient-item-${p.user_id}" onclick="selectPatient('${p.user_id}', '${p.full_name.replace(/'/g, "\\'")}')">
+        <span>${p.full_name}</span>
+        <span style="color:var(--text-muted)">${p.age ?? '-'} ans</span>
+      </div>
+    `).join('');
+  } catch (err) {
+    listDiv.innerHTML = "Erreur : " + err.message;
+  }
+}
+
+async function selectPatient(patientId, fullName) {
+  selectedPatient = patientId;
+  document.querySelectorAll('.patient-list-item').forEach(el => el.classList.remove('active'));
+  document.getElementById(`patient-item-${patientId}`)?.classList.add('active');
+
+  document.getElementById('patient-detail-card').style.display = 'block';
+  document.getElementById('patient-detail-title').textContent = `Dossier de ${fullName}`;
+  document.getElementById('predict-result').innerHTML = '';
+
+  await loadConsultations();
+  await loadMessages();
+
+  if (pollInterval) clearInterval(pollInterval);
+  pollInterval = setInterval(loadMessages, 5000);
+}
+
+async function loadConsultations() {
+  const tbody = document.getElementById('consult-table-body');
+  try {
+    const consultations = await apiFetch(`/doctors/patients/${selectedPatient}/consultations`);
+    if (consultations.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="4">Aucune consultation pour ce patient.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = consultations.map(c => {
+      const badgeClass = c.prediction_label === 'Patologicas' ? 'badge-patologicas' : 'badge-control';
+      const dateStr = new Date(c.date).toLocaleString('fr-FR');
+      return `<tr>
+        <td>${dateStr}</td>
+        <td>${c.prediction_percentage != null ? c.prediction_percentage + '%' : '-'}
+            ${c.prediction_label ? `<span class="badge ${badgeClass}">${c.prediction_label}</span>` : ''}</td>
+        <td>${c.doctor_remarks ?? '<em>Aucune</em>'}</td>
+        <td><button onclick="editRemarks('${c.id}', ${JSON.stringify(c.doctor_remarks ?? '').replace(/"/g, '&quot;')})">Ajouter/Modifier</button></td>
+      </tr>`;
+    }).join('');
+  } catch (err) {
+    tbody.innerHTML = `<tr><td colspan="4">Erreur : ${err.message}</td></tr>`;
+  }
+}
+
+async function submitConsultation() {
+  const fileInput = document.getElementById('audio-file');
+  const resultDiv = document.getElementById('predict-result');
+  if (!fileInput.files.length) {
+    resultDiv.innerHTML = '<span class="error-msg">Veuillez sélectionner un fichier audio.</span>';
+    return;
+  }
+  resultDiv.textContent = "Analyse en cours...";
+
+  const formData = new FormData();
+  formData.append('audio_file', fileInput.files[0]);
+
+  try {
+    const consultation = await apiFetch(`/doctors/patients/${selectedPatient}/consultations`, {
+      method: 'POST',
+      body: formData,
+    });
+    const badgeClass = consultation.prediction_label === 'Patologicas' ? 'badge-patologicas' : 'badge-control';
+    resultDiv.innerHTML = `Résultat : <strong>${consultation.prediction_percentage}%</strong>
+      <span class="badge ${badgeClass}">${consultation.prediction_label}</span>`;
+    fileInput.value = '';
+    await loadConsultations();
+  } catch (err) {
+    resultDiv.innerHTML = `<span class="error-msg">Erreur : ${err.message}</span>`;
+  }
+}
+
+async function editRemarks(consultationId, currentRemarks) {
+  const remarks = prompt("Remarques du médecin :", currentRemarks || '');
+  if (remarks === null) return;
+  try {
+    await apiFetch(`/doctors/consultations/${consultationId}/remarks`, {
+      method: 'PUT',
+      body: JSON.stringify({ doctor_remarks: remarks }),
+    });
+    await loadConsultations();
+  } catch (err) {
+    alert("Erreur : " + err.message);
+  }
+}
+
+async function loadMessages() {
+  if (!selectedPatient) return;
+  try {
+    const messages = await apiFetch(`/messages/${selectedPatient}`);
+    const box = document.getElementById('chat-box');
+    box.innerHTML = messages.map(m => {
+      const mine = m.sender_id === myId;
+      const time = new Date(m.timestamp).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+      return `<div class="chat-msg ${mine ? 'mine' : 'theirs'}">${m.content}<span class="time">${time}</span></div>`;
+    }).join('');
+    box.scrollTop = box.scrollHeight;
+  } catch (err) {
+    console.error(err);
+  }
+}
+
+async function sendMessage() {
+  const input = document.getElementById('chat-input');
+  const content = input.value.trim();
+  if (!content || !selectedPatient) return;
+  try {
+    await apiFetch('/messages', {
+      method: 'POST',
+      body: JSON.stringify({ receiver_id: selectedPatient, content }),
+    });
+    input.value = '';
+    await loadMessages();
+  } catch (err) {
+    alert("Erreur d'envoi : " + err.message);
+  }
+}
+
+document.getElementById('chat-input')?.addEventListener('keypress', (e) => {
+  if (e.key === 'Enter') sendMessage();
+});
+
+init();
+</script>
+</body>
+</html>

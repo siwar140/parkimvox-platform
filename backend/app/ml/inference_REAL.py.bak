@@ -1,0 +1,85 @@
+"""
+Module d'inférence : charge le modèle CNN (best_model.keras) et les statistiques
+de normalisation (mean/std du train set), puis transforme un fichier audio
+en prédiction (pourcentage de probabilité + label).
+
+IMPORTANT :
+- Ce module suppose un modèle Keras entraîné sur des spectrogrammes de forme
+  (257, 59, 1) comme dans le notebook fourni (bestcnnconfig).
+- La fonction `audio_to_spectrogram` reproduit les paramètres mentionnés dans
+  votre pipeline (n_fft=512, hop_length=128, sr=16000, échelle dB [-80, 0]).
+  ADAPTEZ-LA si votre script de génération de spectrogrammes original diffère
+  (c'est la partie la plus sensible : l'inférence doit suivre EXACTEMENT le
+  même prétraitement que l'entraînement, sinon les prédictions seront fausses).
+- norm_stats.json doit contenir {"mean": <valeur>, "std": <valeur>} calculés
+  sur X_train au moment de l'entraînement (voir votre notebook : train_mean,
+  train_std). Sauvegardez ces deux valeurs depuis le notebook, ce fichier
+  n'existe pas encore automatiquement.
+"""
+import json
+import numpy as np
+import librosa
+import tensorflow as tf
+
+from app.config import settings
+
+IMG_HEIGHT = 257
+IMG_WIDTH = 59
+SR = 16000
+N_FFT = 512
+HOP_LENGTH = 128
+VMIN, VMAX = -80, 0
+
+_model = None
+_norm_stats = None
+
+
+def load_model():
+    global _model
+    if _model is None:
+        _model = tf.keras.models.load_model(settings.model_path)
+    return _model
+
+
+def load_norm_stats():
+    global _norm_stats
+    if _norm_stats is None:
+        with open(settings.norm_stats_path, "r") as f:
+            _norm_stats = json.load(f)
+    return _norm_stats
+
+
+def audio_to_spectrogram(audio_path: str) -> np.ndarray:
+    """Audio -> spectrogramme dB de forme (257, 59), à adapter si besoin."""
+    y, _ = librosa.load(audio_path, sr=SR)
+    stft = librosa.stft(y, n_fft=N_FFT, hop_length=HOP_LENGTH)
+    spec_db = librosa.amplitude_to_db(np.abs(stft), ref=np.max)
+    spec_db = np.clip(spec_db, VMIN, VMAX)
+
+    # Ajuste la largeur temporelle à IMG_WIDTH (crop ou pad)
+    if spec_db.shape[1] > IMG_WIDTH:
+        spec_db = spec_db[:, :IMG_WIDTH]
+    elif spec_db.shape[1] < IMG_WIDTH:
+        pad = IMG_WIDTH - spec_db.shape[1]
+        spec_db = np.pad(spec_db, ((0, 0), (0, pad)), mode="constant", constant_values=VMIN)
+
+    return spec_db.astype(np.float32)
+
+
+def predict_from_audio(audio_path: str) -> dict:
+    model = load_model()
+    stats = load_norm_stats()
+
+    spec = audio_to_spectrogram(audio_path)
+    spec = (spec - stats["mean"]) / stats["std"]
+    spec = spec[np.newaxis, ..., np.newaxis]  # (1, 257, 59, 1)
+
+    probability = float(model.predict(spec, verbose=0)[0][0])
+    percentage = round(probability * 100, 2)
+    label = "Patologicas" if probability >= settings.decision_threshold else "Control"
+
+    return {
+        "prediction_percentage": percentage,
+        "prediction_label": label,
+        "threshold_used": settings.decision_threshold,
+    }

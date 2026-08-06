@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8" />
+<title>ParkImVox - Espace Patient</title>
+<link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+<div class="topbar">
+  <h1>ParkImVox — Espace Patient</h1>
+  <button onclick="logout()">Déconnexion</button>
+</div>
+
+<div class="container">
+  <div class="card" id="profile-card">
+    <h2>Mon profil</h2>
+    <div id="profile-content">Chargement...</div>
+  </div>
+
+  <div class="card">
+    <h2>Historique de mes consultations</h2>
+    <table>
+      <thead>
+        <tr><th>Date</th><th>Résultat</th><th>Remarques du médecin</th></tr>
+      </thead>
+      <tbody id="consultations-body">
+        <tr><td colspan="3">Chargement...</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="card" id="messaging-card" style="display:none">
+    <h2>Messagerie avec mon médecin</h2>
+    <div class="chat-box" id="chat-box"></div>
+    <div class="chat-input-row">
+      <input type="text" id="chat-input" placeholder="Écrire un message..." />
+      <button class="btn" style="margin-top:0" onclick="sendMessage()">Envoyer</button>
+    </div>
+  </div>
+</div>
+
+<script src="js/api.js"></script>
+<script>
+requireAuth('patient');
+let doctorId = null;
+let pollInterval = null;
+
+async function loadProfile() {
+  try {
+    const profile = await apiFetch('/patients/me');
+    document.getElementById('profile-content').innerHTML = `
+      <p><strong>Nom :</strong> ${profile.full_name}</p>
+      <p><strong>Âge :</strong> ${profile.age ?? '-'} &nbsp; <strong>Sexe :</strong> ${profile.sexe ?? '-'}</p>
+      <p><strong>Téléphone :</strong> ${profile.telephone ?? '-'}</p>
+      <p><strong>Médecin assigné :</strong> ${profile.doctor_name ?? 'Aucun médecin assigné pour le moment'}</p>
+    `;
+    if (profile.doctor_id) {
+      doctorId = profile.doctor_id;
+      document.getElementById('messaging-card').style.display = 'block';
+      await loadMessages();
+      pollInterval = setInterval(loadMessages, 5000);
+    }
+  } catch (err) {
+    document.getElementById('profile-content').textContent = "Erreur : " + err.message;
+  }
+}
+
+async function loadConsultations() {
+  const tbody = document.getElementById('consultations-body');
+  try {
+    const consultations = await apiFetch('/patients/me/consultations');
+    if (consultations.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="3">Aucune consultation enregistrée pour le moment.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = consultations.map(c => {
+      const badgeClass = c.prediction_label === 'Patologicas' ? 'badge-patologicas' : 'badge-control';
+      const dateStr = new Date(c.date).toLocaleString('fr-FR');
+      return `<tr>
+        <td>${dateStr}</td>
+        <td>${c.prediction_percentage != null ? c.prediction_percentage + '%' : '-'}
+            ${c.prediction_label ? `<span class="badge ${badgeClass}">${c.prediction_label}</span>` : ''}</td>
+        <td>${c.doctor_remarks ?? '<em>Pas encore de remarque</em>'}</td>
+      </tr>`;
+    }).join('');
+  } catch (err) {
+    tbody.innerHTML = `<tr><td colspan="3">Erreur : ${err.message}</td></tr>`;
+  }
+}
+
+async function loadMessages() {
+  if (!doctorId) return;
+  try {
+    const messages = await apiFetch(`/messages/${doctorId}`);
+    const box = document.getElementById('chat-box');
+    const myId = await getMyId();
+    box.innerHTML = messages.map(m => {
+      const mine = m.sender_id === myId;
+      const time = new Date(m.timestamp).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+      return `<div class="chat-msg ${mine ? 'mine' : 'theirs'}">${m.content}<span class="time">${time}</span></div>`;
+    }).join('');
+    box.scrollTop = box.scrollHeight;
+  } catch (err) {
+    console.error(err);
+  }
+}
+
+let cachedMyId = null;
+async function getMyId() {
+  if (cachedMyId) return cachedMyId;
+  const me = await apiFetch('/auth/me');
+  cachedMyId = me.id;
+  return cachedMyId;
+}
+
+async function sendMessage() {
+  const input = document.getElementById('chat-input');
+  const content = input.value.trim();
+  if (!content || !doctorId) return;
+  try {
+    await apiFetch('/messages', {
+      method: 'POST',
+      body: JSON.stringify({ receiver_id: doctorId, content }),
+    });
+    input.value = '';
+    await loadMessages();
+  } catch (err) {
+    alert("Erreur d'envoi : " + err.message);
+  }
+}
+
+document.getElementById('chat-input')?.addEventListener('keypress', (e) => {
+  if (e.key === 'Enter') sendMessage();
+});
+
+loadProfile();
+loadConsultations();
+</script>
+</body>
+</html>

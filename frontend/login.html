@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8" />
+<title>ParkImVox - Connexion</title>
+<link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+<div class="login-wrapper">
+  <div class="login-box">
+    <h1>ParkImVox Platform</h1>
+    <p class="subtitle">Suivi vocal de la maladie de Parkinson</p>
+
+    <div class="tabs">
+      <button id="tab-login" class="active" onclick="showTab('login')">Connexion</button>
+      <button id="tab-register" onclick="showTab('register')">Créer un compte</button>
+    </div>
+
+    <!-- LOGIN -->
+    <form id="login-form">
+      <label>Nom d'utilisateur</label>
+      <input type="text" id="login-username" required />
+      <label>Mot de passe</label>
+      <input type="password" id="login-password" required />
+      <button class="btn" type="submit">Se connecter</button>
+      <div id="login-error" class="error-msg"></div>
+    </form>
+
+    <!-- REGISTER -->
+    <form id="register-form" style="display:none">
+      <label>Je suis</label>
+      <select id="reg-role" onchange="toggleRoleFields()">
+        <option value="patient">Patient</option>
+        <option value="doctor">Médecin</option>
+      </select>
+
+      <label>Nom complet</label>
+      <input type="text" id="reg-fullname" required />
+      <label>Nom d'utilisateur</label>
+      <input type="text" id="reg-username" required />
+      <label>Mot de passe</label>
+      <input type="password" id="reg-password" required />
+
+      <div id="patient-fields">
+        <label>Âge</label>
+        <input type="number" id="reg-age" />
+        <label>Sexe</label>
+        <select id="reg-sexe">
+          <option value="F">Féminin</option>
+          <option value="M">Masculin</option>
+        </select>
+        <label>Téléphone</label>
+        <input type="text" id="reg-telephone" />
+        <label>Nom d'utilisateur de votre médecin (optionnel)</label>
+        <input type="text" id="reg-doctor-username" placeholder="ex: dr_larbi" />
+      </div>
+
+      <div id="doctor-fields" style="display:none">
+        <label>Spécialité</label>
+        <input type="text" id="reg-specialite" placeholder="ex: Neurologie" />
+        <label>Hôpital</label>
+        <input type="text" id="reg-hopital" placeholder="ex: Hôpital Razi" />
+      </div>
+
+      <button class="btn" type="submit">Créer mon compte</button>
+      <div id="register-error" class="error-msg"></div>
+    </form>
+  </div>
+</div>
+
+<script src="js/api.js"></script>
+<script>
+function showTab(tab) {
+  document.getElementById('tab-login').classList.toggle('active', tab === 'login');
+  document.getElementById('tab-register').classList.toggle('active', tab === 'register');
+  document.getElementById('login-form').style.display = tab === 'login' ? 'block' : 'none';
+  document.getElementById('register-form').style.display = tab === 'register' ? 'block' : 'none';
+}
+
+function toggleRoleFields() {
+  const role = document.getElementById('reg-role').value;
+  document.getElementById('patient-fields').style.display = role === 'patient' ? 'block' : 'none';
+  document.getElementById('doctor-fields').style.display = role === 'doctor' ? 'block' : 'none';
+}
+
+function redirectByRole(role) {
+  window.location.href = role === 'doctor' ? 'doctor_dashboard.html' : 'patient_dashboard.html';
+}
+
+document.getElementById('login-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const errorDiv = document.getElementById('login-error');
+  errorDiv.textContent = '';
+  try {
+    const data = await apiFetch('/auth/login', {
+      method: 'POST',
+      body: JSON.stringify({
+        username: document.getElementById('login-username').value,
+        password: document.getElementById('login-password').value,
+      }),
+    });
+    saveSession(data.access_token, data.role, data.full_name);
+    redirectByRole(data.role);
+  } catch (err) {
+    errorDiv.textContent = err.message;
+  }
+});
+
+document.getElementById('register-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const errorDiv = document.getElementById('register-error');
+  errorDiv.textContent = '';
+  const role = document.getElementById('reg-role').value;
+
+  const payload = {
+    username: document.getElementById('reg-username').value,
+    password: document.getElementById('reg-password').value,
+    full_name: document.getElementById('reg-fullname').value,
+    role: role,
+  };
+
+  if (role === 'patient') {
+    payload.age = document.getElementById('reg-age').value ? parseInt(document.getElementById('reg-age').value) : null;
+    payload.sexe = document.getElementById('reg-sexe').value;
+    payload.telephone = document.getElementById('reg-telephone').value;
+    payload.doctor_username = document.getElementById('reg-doctor-username').value || null;
+  } else {
+    payload.specialite = document.getElementById('reg-specialite').value;
+    payload.hopital = document.getElementById('reg-hopital').value;
+  }
+
+  try {
+    const data = await apiFetch('/auth/register', { method: 'POST', body: JSON.stringify(payload) });
+    saveSession(data.access_token, data.role, data.full_name);
+    redirectByRole(data.role);
+  } catch (err) {
+    errorDiv.textContent = err.message;
+  }
+});
+</script>
+</body>
+</html>
