@@ -12,3 +12,4 @@ pydantic-settings==2.5.2
 numpy==1.26.4
 librosa==0.10.2
 tensorflow==2.15.0
+h5py

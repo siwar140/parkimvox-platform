@@ -3,6 +3,5 @@ __pycache__/
 *.pyc
 venv/
 backend/uploaded_audio/
-backend/models_data/*.keras
-backend/models_data/*.json
+#backend/models_data/*.keras
 !backend/models_data/README.md
